@@ -39,13 +39,27 @@ class HandleInertiaRequests extends Middleware
 
         return [
             ...parent::share($request),
-            'name' => config('app.name'),
-            'auth' => [
+
+                'name' => config('app.name'),
+
+                'auth' => [
                 'user' => $user,
-            ],
-            'sidebarOpen' => ! $request->hasCookie('sidebar_state') || $request->cookie('sidebar_state') === 'true',
-            'currentTeam' => fn () => $user?->currentTeam ? $user->toUserTeam($user->currentTeam) : null,
+                ],
+
+            'sidebarOpen' => ! $request->hasCookie('sidebar_state')
+            || $request->cookie('sidebar_state') === 'true',
+
+            'currentTeam' => fn () => $user?->currentTeam
+                ? $user->toUserTeam($user->currentTeam)
+            : null,
+
             'teams' => fn () => $user?->toUserTeams(includeCurrent: true) ?? [],
+
+        // Pesan sementara dari backend untuk ditampilkan di frontend.
+            'flash' => [
+            'success' => fn () => $request->session()->get('success'),
+            'error' => fn () => $request->session()->get('error'),
+            ],
         ];
     }
 }
