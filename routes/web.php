@@ -4,6 +4,9 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\Teams\TeamInvitationController;
 use App\Http\Controllers\Admin\ProdukController;
 use App\Http\Controllers\Admin\KategoriController;
+use App\Http\Controllers\KasirController;
+use App\Http\Controllers\KasirTransaksiController;
+use App\Http\Controllers\GaransiController;
 use Illuminate\Support\Facades\Route;
 
 Route::inertia('/', 'Welcome')->name('home');
@@ -55,4 +58,25 @@ Route::middleware(['auth'])->group(function () {
     Route::delete('invitations/{invitation}', [TeamInvitationController::class, 'decline'])->name('invitations.decline');
 });
 
+Route::get('/kasir', [KasirController::class, 'index'])
+    ->middleware('auth')
+    ->name('kasir.index');
+
+Route::post('/kasir/checkout', [KasirController::class, 'store'])
+    ->middleware('auth')
+    ->name('kasir.checkout');
+
+Route::get(
+    '/kasir/riwayat',
+    [KasirTransaksiController::class, 'index']
+)->middleware('auth')->name('kasir.riwayat');
+
+Route::get(
+    '/kasir/struk/{invoice}',
+    [KasirTransaksiController::class, 'struk']
+)->middleware('auth')->name('kasir.struk');
+
+Route::get('/garansi', [GaransiController::class, 'index'])
+    ->name('garansi.index');
+    
 require __DIR__.'/settings.php';
