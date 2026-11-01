@@ -1,4 +1,3 @@
-
 import { createInertiaApp } from '@inertiajs/vue3';
 import { initializeTheme } from '@/composables/useAppearance';
 import AppLayout from '@/layouts/AppLayout.vue';
@@ -19,6 +18,7 @@ void createInertiaApp({
             // POS menggunakan layout khususnya sendiri.
             case name.startsWith('kasir/'):
             case name.startsWith('garansi/'):
+            case name.startsWith('katalog/'):
                 return null;
 
             case name.startsWith('auth/'):

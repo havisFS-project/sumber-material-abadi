@@ -15,6 +15,8 @@ type TransaksiItem = {
     total_bayar: number;
     metode_bayar: 'tunai' | 'qris';
     status: 'lunas' | 'dibatalkan';
+    alasan_batal: string | null;
+    can_void: boolean;
 };
 
 type PaginationLink = {
@@ -37,6 +39,11 @@ const props = defineProps<{
 }>();
 
 const search = ref(props.filters.q ?? '');
+
+const transaksiDipilih = ref<TransaksiItem | null>(null);
+const alasanBatal = ref('');
+const errorBatal = ref('');
+const sedangMembatalkan = ref(false);
 
 function rupiah(value: number) {
     return new Intl.NumberFormat('id-ID', {
@@ -81,6 +88,68 @@ function labelHalaman(label: string) {
         .replace('&laquo;', '‹')
         .replace('&raquo;', '›');
 }
+
+function bukaDialogBatal(item: TransaksiItem) {
+    if (!item.can_void || item.status !== 'lunas') return;
+
+    transaksiDipilih.value = item;
+    alasanBatal.value = '';
+    errorBatal.value = '';
+}
+
+function tutupDialogBatal() {
+    if (sedangMembatalkan.value) return;
+
+    transaksiDipilih.value = null;
+    alasanBatal.value = '';
+    errorBatal.value = '';
+}
+
+function konfirmasiBatal() {
+    const item = transaksiDipilih.value;
+    const alasan = alasanBatal.value.trim();
+
+    if (!item) return;
+
+    if (alasan.length < 5) {
+        errorBatal.value = 'Alasan pembatalan minimal 5 karakter.';
+        return;
+    }
+
+    if (alasan.length > 2000) {
+        errorBatal.value = 'Alasan pembatalan maksimal 2.000 karakter.';
+        return;
+    }
+
+    errorBatal.value = '';
+    sedangMembatalkan.value = true;
+
+    router.patch(
+        `/admin/transaksi/${item.id}/void`,
+        {
+            alasan_batal: alasan,
+        },
+        {
+            preserveScroll: true,
+
+            onSuccess: () => {
+                transaksiDipilih.value = null;
+                alasanBatal.value = '';
+                errorBatal.value = '';
+            },
+
+            onError: (errors) => {
+                errorBatal.value =
+                    errors.alasan_batal ??
+                    'Pembatalan gagal diproses. Silakan periksa kembali.';
+            },
+
+            onFinish: () => {
+                sedangMembatalkan.value = false;
+            },
+        },
+    );
+}
 </script>
 
 <template>
@@ -120,7 +189,7 @@ function labelHalaman(label: string) {
                 </h2>
 
                 <p class="mt-2 text-sm text-slate-500">
-                    Cari invoice dan lihat kembali transaksi yang sudah tercatat.
+                    Cari invoice, lihat struk, dan kelola pembatalan transaksi.
                 </p>
             </section>
 
@@ -189,7 +258,7 @@ function labelHalaman(label: string) {
                 </div>
 
                 <div class="overflow-x-auto">
-                    <table class="w-full min-w-[950px] text-left">
+                    <table class="w-full min-w-[1100px] text-left">
                         <thead>
                             <tr class="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                                 <th class="px-5 py-4 font-semibold">Invoice / Tanggal</th>
@@ -212,6 +281,7 @@ function labelHalaman(label: string) {
                                     <p class="font-semibold text-[#08264F]">
                                         {{ item.no_invoice }}
                                     </p>
+
                                     <p class="mt-1 text-xs text-slate-400">
                                         {{ item.tanggal ?? '—' }}
                                     </p>
@@ -246,15 +316,33 @@ function labelHalaman(label: string) {
                                     >
                                         {{ item.status === 'lunas' ? 'Lunas' : 'Dibatalkan' }}
                                     </span>
+
+                                    <p
+                                        v-if="item.status === 'dibatalkan' && item.alasan_batal"
+                                        class="mt-2 max-w-[220px] text-xs leading-relaxed text-red-600"
+                                    >
+                                        Alasan: {{ item.alasan_batal }}
+                                    </p>
                                 </td>
 
                                 <td class="px-5 py-4">
-                                    <Link
-                                        :href="`/kasir/struk/${encodeURIComponent(item.no_invoice)}`"
-                                        class="inline-flex rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-[#08264F] transition hover:border-[#FF6B16] hover:text-[#FF6B16]"
-                                    >
-                                        Lihat Struk
-                                    </Link>
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <Link
+                                            :href="`/kasir/struk/${encodeURIComponent(item.no_invoice)}`"
+                                            class="inline-flex rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-[#08264F] transition hover:border-[#FF6B16] hover:text-[#FF6B16]"
+                                        >
+                                            Lihat Struk
+                                        </Link>
+
+                                        <button
+                                            v-if="item.can_void && item.status === 'lunas'"
+                                            type="button"
+                                            class="inline-flex rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-100"
+                                            @click="bukaDialogBatal(item)"
+                                        >
+                                            Batalkan
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
 
@@ -298,5 +386,142 @@ function labelHalaman(label: string) {
                 </div>
             </section>
         </main>
+
+        <!-- Dialog Konfirmasi Pembatalan -->
+        <div
+            v-if="transaksiDipilih"
+            class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/60 p-4"
+            @click.self="tutupDialogBatal"
+        >
+            <div class="w-full max-w-lg rounded-2xl bg-white shadow-2xl">
+                <div class="flex items-start justify-between border-b border-slate-100 p-5 sm:p-6">
+                    <div>
+                        <div class="flex h-11 w-11 items-center justify-center rounded-xl bg-red-50 text-red-600">
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                class="h-6 w-6"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                            >
+                                <path d="M12 9v4" />
+                                <path d="M12 17h.01" />
+                                <path d="M10.3 3.9 1.8 18.1A2 2 0 0 0 3.5 21h17a2 2 0 0 0 1.7-2.9L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+                            </svg>
+                        </div>
+
+                        <h3 class="mt-4 text-lg font-bold text-[#08264F]">
+                            Batalkan Transaksi?
+                        </h3>
+
+                        <p class="mt-1 text-sm text-slate-500">
+                            Tindakan ini akan membatalkan transaksi dan mengembalikan stok produk.
+                        </p>
+                    </div>
+
+                    <button
+                        type="button"
+                        :disabled="sedangMembatalkan"
+                        class="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+                        aria-label="Tutup dialog"
+                        @click="tutupDialogBatal"
+                    >
+                        ✕
+                    </button>
+                </div>
+
+                <div class="space-y-5 p-5 sm:p-6">
+                    <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <p class="text-xs font-medium uppercase tracking-wide text-slate-400">
+                            Invoice
+                        </p>
+
+                        <p class="mt-1 font-bold text-[#08264F]">
+                            {{ transaksiDipilih.no_invoice }}
+                        </p>
+
+                        <div class="mt-3 flex items-center justify-between gap-3">
+                            <span class="text-sm text-slate-500">
+                                Total transaksi
+                            </span>
+
+                            <span class="font-bold text-[#08264F]">
+                                {{ rupiah(transaksiDipilih.total_bayar) }}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label
+                            for="alasan-batal"
+                            class="mb-2 block text-sm font-semibold text-slate-700"
+                        >
+                            Alasan Pembatalan
+                            <span class="text-red-500">*</span>
+                        </label>
+
+                        <textarea
+                            id="alasan-batal"
+                            v-model="alasanBatal"
+                            rows="4"
+                            maxlength="2000"
+                            placeholder="Contoh: Terjadi kesalahan input produk pada transaksi..."
+                            class="w-full resize-y rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-[#FF6B16] focus:ring-2 focus:ring-orange-100"
+                            :disabled="sedangMembatalkan"
+                            @input="errorBatal = ''"
+                        />
+
+                        <div class="mt-1 flex items-center justify-between gap-3">
+                            <p class="text-xs text-slate-400">
+                                Minimal 5 karakter.
+                            </p>
+
+                            <p class="text-xs text-slate-400">
+                                {{ alasanBatal.length }}/2000
+                            </p>
+                        </div>
+
+                        <p
+                            v-if="errorBatal"
+                            class="mt-2 text-sm font-medium text-red-600"
+                        >
+                            {{ errorBatal }}
+                        </p>
+                    </div>
+
+                    <div class="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                        <p class="text-sm font-semibold text-amber-800">
+                            Perhatian
+                        </p>
+
+                        <p class="mt-1 text-xs leading-relaxed text-amber-700">
+                            Garansi dari transaksi ini akan dinyatakan tidak berlaku.
+                            Transaksi yang memiliki klaim garansi berjalan tidak dapat dibatalkan.
+                        </p>
+                    </div>
+
+                    <div class="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                        <button
+                            type="button"
+                            :disabled="sedangMembatalkan"
+                            class="rounded-xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            @click="tutupDialogBatal"
+                        >
+                            Kembali
+                        </button>
+
+                        <button
+                            type="button"
+                            :disabled="sedangMembatalkan || alasanBatal.trim().length < 5"
+                            class="rounded-xl bg-red-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            @click="konfirmasiBatal"
+                        >
+                            {{ sedangMembatalkan ? 'Memproses...' : 'Ya, Batalkan Transaksi' }}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 </template>

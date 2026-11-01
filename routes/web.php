@@ -7,7 +7,9 @@ use App\Http\Controllers\Admin\KategoriController;
 use App\Http\Controllers\KasirController;
 use App\Http\Controllers\KasirTransaksiController;
 use App\Http\Controllers\GaransiController;
+use App\Http\Controllers\KatalogController;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Admin\KlaimGaransiController;
 
 Route::inertia('/', 'Welcome')->name('home');
 
@@ -51,12 +53,32 @@ Route::middleware('auth')
 
         Route::put('/kategori/{kategori}', [KategoriController::class, 'update'])
             ->name('kategori.update');
+
+        Route::get('/klaim-garansi', [
+            KlaimGaransiController::class,
+            'index',
+        ])->name('klaim-garansi.index');
+
+        Route::patch('/klaim-garansi/{garansi}/status', [
+            KlaimGaransiController::class,
+            'updateStatus',
+        ])->name('klaim-garansi.status');
+
+        Route::patch(
+            '/transaksi/{transaksi}/void',
+            [KasirTransaksiController::class, 'void']
+        )->name('transaksi.void');
             });
 
 Route::middleware(['auth'])->group(function () {
     Route::post('invitations/{invitation}/accept', [TeamInvitationController::class, 'accept'])->name('invitations.accept');
     Route::delete('invitations/{invitation}', [TeamInvitationController::class, 'decline'])->name('invitations.decline');
 });
+
+Route::get('/katalog', [
+    KatalogController::class,
+    'index',
+])->name('katalog.index');
 
 Route::get('/kasir', [KasirController::class, 'index'])
     ->middleware('auth')
@@ -78,5 +100,9 @@ Route::get(
 
 Route::get('/garansi', [GaransiController::class, 'index'])
     ->name('garansi.index');
+    
+Route::post('/garansi/klaim', [GaransiController::class, 'storeClaim'])
+    ->middleware('throttle:5,1')
+    ->name('garansi.klaim');
     
 require __DIR__.'/settings.php';

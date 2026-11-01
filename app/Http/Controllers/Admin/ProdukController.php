@@ -8,6 +8,7 @@ use App\Models\Produk;
 use Illuminate\Http\Request;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -61,6 +62,9 @@ class ProdukController extends Controller
                 'id' => $item->id,
                 'kode' => $item->kode,
                 'nama' => $item->nama,
+                'foto_url' => $item->foto
+                    ? asset('storage/' . ltrim($item->foto, '/'))
+                    : null,
                 'satuan' => $item->satuan,
                 'kategori' => $item->kategori?->nama,
                 'harga_jual' => (int) $item->harga_jual,
@@ -147,6 +151,12 @@ private function produkRules(
         'diskon_aktif' => ['required', 'boolean'],
         'punya_garansi' => ['required', 'boolean'],
         'is_active' => ['required', 'boolean'],
+        'foto' => [
+            'nullable',
+            'image',
+            'mimes:jpg,jpeg,png,webp',
+            'max:2048',
+        ],
     ];
 
     if ($request->boolean('diskon_aktif')) {
@@ -203,20 +213,35 @@ public function store(Request $request): RedirectResponse
         $this->produkRules($request)
     );
 
+    // Ambil file foto sebelum menyimpan data produk.
+    $foto = $data['foto'] ?? null;
+    unset($data['foto']);
+
     // Normalisasi nilai checkbox.
     $data['diskon_aktif'] = $request->boolean('diskon_aktif');
     $data['punya_garansi'] = $request->boolean('punya_garansi');
     $data['is_active'] = $request->boolean('is_active');
 
-    // Jika diskon tidak aktif, jangan terapkan diskon.
     if (! $data['diskon_aktif']) {
         $data['diskon_tipe'] = null;
         $data['diskon_nilai'] = 0;
     }
 
-    // Jika tidak bergaransi, masa garansi menjadi kosong.
     if (! $data['punya_garansi']) {
         $data['masa_garansi_bulan'] = null;
+    }
+
+    // Simpan foto ke storage/app/public/produk.
+    if ($foto) {
+        $fotoPath = $foto->store('produk', 'public');
+
+        if (! $fotoPath) {
+            return back()->withErrors([
+                'foto' => 'Foto produk gagal disimpan.',
+            ]);
+        }
+
+        $data['foto'] = $fotoPath;
     }
 
     Produk::create($data);
@@ -234,22 +259,31 @@ public function edit(
 
     return Inertia::render('admin/produk/Form', [
         'mode' => 'edit',
-        'produk' => $produk->only([
-            'id',
-            'kategori_id',
-            'kode',
-            'nama',
-            'satuan',
-            'deskripsi',
-            'harga_jual',
-            'diskon_tipe',
-            'diskon_nilai',
-            'diskon_aktif',
-            'stok',
-            'punya_garansi',
-            'masa_garansi_bulan',
-            'is_active',
-        ]),
+
+        'produk' => [
+            ...$produk->only([
+                'id',
+                'kategori_id',
+                'kode',
+                'nama',
+                'satuan',
+                'deskripsi',
+                'harga_jual',
+                'diskon_tipe',
+                'diskon_nilai',
+                'diskon_aktif',
+                'stok',
+                'punya_garansi',
+                'masa_garansi_bulan',
+                'is_active',
+                'foto',
+            ]),
+
+            'foto_url' => $produk->foto
+                ? asset('storage/' . ltrim($produk->foto, '/'))
+                : null,
+        ],
+
         'kategoris' => Kategori::orderBy('nama')
             ->get(['id', 'nama']),
     ]);
@@ -265,6 +299,9 @@ public function update(
         $this->produkRules($request, $produk)
     );
 
+    $foto = $data['foto'] ?? null;
+    unset($data['foto']);
+
     $data['diskon_aktif'] = $request->boolean('diskon_aktif');
     $data['punya_garansi'] = $request->boolean('punya_garansi');
     $data['is_active'] = $request->boolean('is_active');
@@ -278,7 +315,30 @@ public function update(
         $data['masa_garansi_bulan'] = null;
     }
 
-    $produk->update($data);
+    // Ganti foto jika admin mengunggah foto baru.
+    if ($foto) {
+        $fotoLama = $produk->foto;
+
+        $fotoBaru = $foto->store('produk', 'public');
+
+        if (! $fotoBaru) {
+            return back()->withErrors([
+                'foto' => 'Foto produk gagal disimpan.',
+            ]);
+        }
+
+        $data['foto'] = $fotoBaru;
+
+        $produk->update($data);
+
+        // Hapus foto lama setelah data berhasil diperbarui.
+        if ($fotoLama) {
+            Storage::disk('public')->delete($fotoLama);
+        }
+    } else {
+        // Jika tidak ada foto baru, foto lama tetap digunakan.
+        $produk->update($data);
+    }
 
     return redirect()
         ->route('admin.produk.index')

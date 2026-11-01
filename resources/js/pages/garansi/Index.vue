@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue';
-import { Head, router } from '@inertiajs/vue3';
+import { computed, ref, watch } from 'vue';
+import { Head, router, useForm } from '@inertiajs/vue3';
 
 type HasilGaransi = {
     no_garansi: string;
@@ -9,15 +9,70 @@ type HasilGaransi = {
     tanggal_berakhir: string;
     masa_berlaku: 'aktif' | 'berakhir';
     status_klaim: string;
+    catatan_pelanggan: string | null;
+    jenis_penyelesaian: 'perbaikan' | 'penggantian' | 'refund' | null;
+    detail_penyelesaian: string | null;
+    nominal_refund: number | null;
+    metode_refund: 'tunai' | 'transfer' | null;
+    tanggal_selesai: string | null;
 };
 
 const props = defineProps<{
     dicari: boolean;
     noGaransi: string;
     hasil: HasilGaransi | null;
+    whatsappToko?: string | null;
+    flash?: {
+        success?: string | null;
+        error?: string | null;
+    };
 }>();
 
 const nomor = ref(props.noGaransi);
+
+const whatsappUrl = computed(() => {
+    const phone = (props.whatsappToko ?? '').replace(/\D/g, '');
+
+    if (!phone || !props.hasil) return null;
+
+    const pesan = `Halo Sumber Material Abadi, saya ingin menanyakan tindak lanjut klaim garansi nomor ${props.hasil.no_garansi}. Mohon informasi lebih lanjut mengenai keputusan klaim saya. Terima kasih.`;
+
+    return `https://wa.me/${phone}?text=${encodeURIComponent(pesan)}`;
+});
+
+const claimForm = useForm({
+    no_garansi: props.hasil?.no_garansi ?? props.noGaransi,
+    keluhan: '',
+    foto_klaim: null as File | null,
+});
+
+// Perbarui nomor garansi ketika hasil pencarian berubah.
+watch(
+    () => props.hasil?.no_garansi,
+    (value) => {
+        claimForm.no_garansi = value ?? '';
+    },
+);
+
+function pilihFoto(event: Event) {
+    const input = event.target as HTMLInputElement;
+    claimForm.foto_klaim = input.files?.[0] ?? null;
+}
+
+function ajukanKlaim() {
+    if (!props.hasil) return;
+
+    claimForm.no_garansi = props.hasil.no_garansi;
+
+    claimForm.post('/garansi/klaim', {
+        forceFormData: true,
+        preserveScroll: true,
+
+        onSuccess: () => {
+            claimForm.reset('keluhan', 'foto_klaim');
+        },
+    });
+}
 
 function cariGaransi() {
     const query = nomor.value.trim();
@@ -46,6 +101,24 @@ function statusKlaim(status: string): string {
     };
 
     return labels[status] ?? status;
+}
+
+function jenisPenyelesaianLabel(jenis: string): string {
+    const labels: Record<string, string> = {
+        perbaikan: 'Perbaikan Barang',
+        penggantian: 'Penggantian Barang',
+        refund: 'Pengembalian Dana (Refund)',
+    };
+
+    return labels[jenis] ?? jenis;
+}
+
+function rupiah(value: number): string {
+    return new Intl.NumberFormat('id-ID', {
+        style: 'currency',
+        currency: 'IDR',
+        maximumFractionDigits: 0,
+    }).format(value);
 }
 </script>
 
@@ -77,6 +150,22 @@ function statusKlaim(status: string): string {
         </header>
 
         <main class="mx-auto max-w-3xl px-4 py-10 sm:px-6 sm:py-16">
+            <div
+                v-if="props.flash?.success"
+                role="status"
+                class="mb-6 rounded-xl border border-green-200 bg-green-50 px-5 py-4 text-sm font-medium text-green-800"
+            >
+                {{ props.flash.success }}
+            </div>
+
+            <div
+                v-if="props.flash?.error"
+                role="alert"
+                class="mb-6 rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm font-medium text-red-800"
+            >
+                {{ props.flash.error }}
+            </div>
+
             <section class="text-center">
                 <div class="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-100 text-[#08264F]">
                     <svg
@@ -214,12 +303,289 @@ function statusKlaim(status: string): string {
                         </p>
                     </div>
 
+                    <!-- Informasi perkembangan klaim -->
+                    <div
+                        v-if="hasil.status_klaim !== 'belum_ada'"
+                        class="rounded-xl border border-blue-200 bg-blue-50 p-4"
+                    >
+                        <h4 class="font-bold text-[#08264F]">
+                            Informasi Pengajuan
+                        </h4>
+
+                        <p class="mt-2 text-sm leading-6 text-slate-700">
+                            {{
+                                hasil.status_klaim === 'diajukan'
+                                    ? 'Pengajuan klaim berhasil diterima dan sedang menunggu pemeriksaan admin.'
+                                    : hasil.status_klaim === 'diverifikasi'
+                                    ? 'Admin sedang memeriksa kelayakan klaim dan bukti kerusakan.'
+                                    : hasil.status_klaim === 'disetujui'
+                                        ? 'Klaim Anda telah disetujui. Toko sedang menindaklanjuti penyelesaian.'
+                                        : hasil.status_klaim === 'ditolak'
+                                        ? 'Mohon maaf, klaim Anda belum dapat disetujui. Silakan hubungi pihak toko untuk informasi lebih lanjut.'
+                                        : 'Penyelesaian klaim Anda telah selesai.'
+                            }}
+                        </p>
+                    </div>
+
+                    <!-- Kontak WhatsApp khusus klaim ditolak -->
+                    <div
+                        v-if="hasil.status_klaim === 'ditolak'"
+                        class="rounded-xl border border-green-200 bg-green-50 p-4"
+                    >
+                        <h4 class="font-bold text-green-900">
+                            Butuh penjelasan lebih lanjut?
+                        </h4>
+
+                        <p class="mt-2 text-sm leading-6 text-green-800">
+                            Silakan hubungi toko melalui WhatsApp untuk
+                            menanyakan alasan penolakan atau tindak lanjut
+                            klaim garansi Anda.
+                        </p>
+
+                        <a
+                            v-if="whatsappUrl"
+                            :href="whatsappUrl"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-green-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-green-700 sm:w-auto"
+                        >
+                            Hubungi WhatsApp Toko
+                        </a>
+
+                        <p
+                            v-else
+                            class="mt-3 text-xs leading-5 text-green-800"
+                        >
+                            Nomor WhatsApp toko belum dikonfigurasi.
+                            Silakan hubungi toko melalui nomor resmi yang
+                            tercantum pada struk pembelian.
+                        </p>
+                    </div>
+
+                    <!-- Catatan yang ditujukan kepada pelanggan -->
+                    <!-- Pesan yang ditujukan kepada pelanggan -->
+                    <div
+                        v-if="hasil.catatan_pelanggan"
+                        class="rounded-xl border border-blue-200 bg-blue-50 p-4"
+                    >
+                        <h4 class="font-bold text-[#08264F]">
+                            Pesan dari Toko
+                        </h4>
+
+                        <p class="mt-2 whitespace-pre-line text-sm leading-6 text-slate-600">
+                            {{ hasil.catatan_pelanggan }}
+                        </p>
+                    </div>
+
+                    <!-- Detail solusi yang diberikan -->
+                    <div
+                        v-if="hasil.jenis_penyelesaian"
+                        class="space-y-4 rounded-xl border border-green-200 bg-green-50 p-4"
+                    >
+                        <div>
+                            <p class="text-xs font-semibold uppercase tracking-wide text-green-700">
+                                Keputusan Penyelesaian
+                            </p>
+
+                            <h4 class="mt-1 text-lg font-bold text-green-900">
+                                {{ jenisPenyelesaianLabel(hasil.jenis_penyelesaian) }}
+                            </h4>
+                        </div>
+
+                        <div>
+                            <p class="text-xs text-green-800">
+                                Detail penyelesaian
+                            </p>
+
+                            <p class="mt-1 whitespace-pre-line text-sm leading-6 text-green-950">
+                                {{ hasil.detail_penyelesaian || '—' }}
+                            </p>
+                        </div>
+
+                        <div v-if="hasil.jenis_penyelesaian === 'refund'">
+                            <p class="text-xs text-green-800">
+                                Nominal pengembalian dana
+                            </p>
+
+                            <p class="mt-1 text-xl font-bold text-green-900">
+                                {{ rupiah(hasil.nominal_refund ?? 0) }}
+                            </p>
+
+                            <p class="mt-1 text-sm text-green-800">
+                                Metode:
+                                {{ hasil.metode_refund === 'transfer' ? 'Transfer Bank' : 'Tunai' }}
+                            </p>
+
+                            <p class="mt-2 text-xs leading-5 text-green-800">
+                                Pengembalian dana dilakukan oleh pihak toko sesuai
+                                informasi penyelesaian di atas.
+                            </p>
+                        </div>
+
+                        <div
+                            v-if="hasil.tanggal_selesai"
+                            class="border-t border-green-200 pt-3"
+                        >
+                            <p class="text-xs text-green-800">
+                                Tanggal penyelesaian
+                            </p>
+
+                            <p class="mt-1 text-sm font-semibold text-green-950">
+                                {{ hasil.tanggal_selesai }}
+                            </p>
+                        </div>
+                    </div>
+
                     <p class="text-xs leading-5 text-slate-500">
                         Simpan nomor garansi ini untuk keperluan layanan purna jual.
                         Status masa berlaku dan status klaim merupakan dua informasi
                         yang berbeda.
                     </p>
                 </div>
+            </section>
+
+            <section
+                v-if="
+                    dicari &&
+                    hasil &&
+                    hasil.masa_berlaku === 'aktif' &&
+                    hasil.status_klaim === 'belum_ada'
+                "
+                class="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7"
+            >
+                <div>
+                    <p class="text-sm font-semibold text-[#FF6B16]">
+                        LAYANAN PELANGGAN
+                    </p>
+
+                    <h3 class="mt-1 text-xl font-bold text-[#08264F]">
+                        Ajukan Klaim Garansi
+                    </h3>
+
+                    <p class="mt-2 text-sm leading-6 text-slate-500">
+                        Jelaskan kendala produk dan sertakan foto sebagai bukti
+                        untuk membantu admin melakukan pemeriksaan.
+                    </p>
+                </div>
+
+                <form class="mt-6 space-y-5" @submit.prevent="ajukanKlaim">
+                    <div>
+                        <label
+                            for="keluhan"
+                            class="mb-2 block text-sm font-semibold text-slate-700"
+                        >
+                            Keluhan atau kerusakan produk
+                        </label>
+
+                        <textarea
+                            id="keluhan"
+                            v-model="claimForm.keluhan"
+                            rows="4"
+                            minlength="10"
+                            maxlength="2000"
+                            required
+                            placeholder="Jelaskan kondisi dan kendala yang dialami..."
+                            class="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-[#FF6B16] focus:ring-2 focus:ring-orange-100"
+                            :class="{
+                                'border-red-400': claimForm.errors.keluhan,
+                            }"
+                        ></textarea>
+
+                        <p
+                            v-if="claimForm.errors.keluhan"
+                            class="mt-1 text-sm text-red-600"
+                        >
+                            {{ claimForm.errors.keluhan }}
+                        </p>
+
+                        <p class="mt-1 text-xs text-slate-400">
+                            Minimal 10 dan maksimal 2.000 karakter.
+                        </p>
+                    </div>
+
+                    <div>
+                        <label
+                            for="foto_klaim"
+                            class="mb-2 block text-sm font-semibold text-slate-700"
+                        >
+                            Foto bukti kerusakan
+                        </label>
+
+                        <input
+                            id="foto_klaim"
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp"
+                            required
+                            class="block w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-[#08264F] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
+                            @change="pilihFoto"
+                        />
+
+                        <p class="mt-2 text-xs text-slate-400">
+                            Format JPG, JPEG, PNG, atau WEBP. Maksimal 2 MB.
+                        </p>
+
+                        <p
+                            v-if="claimForm.foto_klaim"
+                            class="mt-1 text-xs font-medium text-green-700"
+                        >
+                            File dipilih: {{ claimForm.foto_klaim.name }}
+                        </p>
+
+                        <p
+                            v-if="claimForm.errors.foto_klaim"
+                            class="mt-1 text-sm text-red-600"
+                        >
+                            {{ claimForm.errors.foto_klaim }}
+                        </p>
+                    </div>
+
+                    <p
+                        v-if="claimForm.errors.no_garansi"
+                        role="alert"
+                        class="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+                    >
+                        {{ claimForm.errors.no_garansi }}
+                    </p>
+
+                    <button
+                        type="submit"
+                        :disabled="claimForm.processing"
+                        class="w-full rounded-xl bg-[#FF6B16] px-5 py-3.5 text-sm font-bold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                        {{
+                            claimForm.processing
+                                ? 'Mengirim Pengajuan...'
+                                : 'Ajukan Klaim Garansi'
+                        }}
+                    </button>
+
+                    <p class="text-center text-xs leading-5 text-slate-400">
+                        Pengajuan akan diperiksa oleh admin. Pastikan informasi dan
+                        foto yang diberikan sesuai kondisi produk.
+                    </p>
+                </form>
+            </section>
+
+            <section
+                v-else-if="
+                    dicari &&
+                    hasil &&
+                    hasil.status_klaim !== 'belum_ada'
+                "
+                class="mt-6 rounded-2xl border border-blue-200 bg-blue-50 p-5"
+            >
+                <h3 class="font-bold text-[#08264F]">
+                    Klaim sudah memiliki status
+                </h3>
+
+                <p class="mt-2 text-sm leading-6 text-slate-600">
+                    Status saat ini:
+                    <span class="font-semibold">
+                        {{ statusKlaim(hasil.status_klaim) }}
+                    </span>.
+                    Silakan periksa kembali secara berkala untuk mengetahui
+                    perkembangan klaim.
+                </p>
             </section>
 
             <section

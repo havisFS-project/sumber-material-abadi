@@ -22,11 +22,11 @@ class DetailTransaksi extends Model
 
     public function produk(): BelongsTo
     {
-        return $this->belongsTo(Produk::class);
+        return $this->belongsTo(Produk::class, 'produk_id');
     }
 
     public function garansi(): HasOne
     {
-        return $this->hasOne(Garansi::class);
+        return $this->hasOne(Garansi::class, 'detail_transaksi_id');
     }
 }

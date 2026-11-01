@@ -80,6 +80,10 @@ const activeMenu = computed(() => {
         return 'kategori';
     }
 
+    if (page.url.startsWith('/admin/klaim-garansi')) {
+    return 'klaim-garansi';
+    }
+
     return '';
 });
 
@@ -149,6 +153,19 @@ function logout() {
                 >
                     <span class="text-lg">▦</span>
                     Kategori
+                </Link>
+
+                <Link
+                    href="/admin/klaim-garansi"
+                    class="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold transition"
+                    :class="
+                        activeMenu === 'klaim-garansi'
+                            ? 'bg-[#FF6B16] text-white shadow-lg shadow-orange-950/20'
+                            : 'text-blue-100 hover:bg-white/10'
+                    "
+                >
+                    <span class="text-lg">▣</span>
+                    Klaim Garansi
                 </Link>
             </nav>
 

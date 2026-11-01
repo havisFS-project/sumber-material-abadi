@@ -35,4 +35,15 @@ return [
         ],
     ],
 
+    'whatsapp' => [
+    'toko' => env('WHATSAPP_TOKO', ''),
+    ],
+
+    'store' => [
+    'address' => env('STORE_ADDRESS', ''),
+    'maps_url' => env('STORE_MAPS_URL', ''),
+    'weekday_hours' => env('STORE_WEEKDAY_HOURS', ''),
+    'sunday_hours' => env('STORE_SUNDAY_HOURS', ''),
+    ],
+
 ];
