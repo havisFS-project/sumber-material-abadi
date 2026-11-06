@@ -170,34 +170,61 @@ class KasirTransaksiController extends Controller
                 'alasan_batal' => $item->alasan_batal,
 
                 'detail' => $item->detail->map(
-                    fn ($detail) => [
-                        'id' => $detail->id,
-                        'nama_produk' => $detail->nama_produk,
-                        'harga_satuan' => (int) $detail->harga_satuan,
-                        'diskon_satuan' => (int) $detail->diskon_satuan,
-                        'jumlah' => (int) $detail->jumlah,
-                        'subtotal' => (int) $detail->subtotal,
+                    function ($detail) use ($item) {
+                        $urlKlaim = null;
 
-                        'garansi' => $detail->garansi
-                            ? [
-                                'no_garansi' => $detail->garansi->no_garansi,
+                        // QR hanya diberikan untuk garansi yang valid
+                        // pada transaksi yang sudah lunas.
+                        if (
+                            $item->status === 'lunas'
+                            && $detail->garansi
+                            && $detail->garansi->is_valid
+                        ) {
+                            $baseUrl = rtrim(
+                                (string) config('app.public_url'),
+                                '/'
+                            );
 
-                                'tanggal_mulai' => $detail->garansi->tanggal_mulai
-                                    ? Carbon::parse(
-                                        $detail->garansi->tanggal_mulai
-                                    )->format('d/m/Y')
-                                    : null,
+                            $urlKlaim = $baseUrl . route(
+                                'garansi.index',
+                                [
+                                    'no_garansi' => $detail->garansi->no_garansi,
+                                ],
+                                false
+                            );
+                        }
 
-                                'tanggal_berakhir' => $detail->garansi->tanggal_berakhir
-                                    ? Carbon::parse(
-                                        $detail->garansi->tanggal_berakhir
-                                    )->format('d/m/Y')
-                                    : null,
+                        return [
+                            'id' => $detail->id,
+                            'nama_produk' => $detail->nama_produk,
+                            'harga_satuan' => (int) $detail->harga_satuan,
+                            'diskon_satuan' => (int) $detail->diskon_satuan,
+                            'jumlah' => (int) $detail->jumlah,
+                            'subtotal' => (int) $detail->subtotal,
 
-                                'is_valid' => (bool) $detail->garansi->is_valid,
-                            ]
-                            : null,
-                    ]
+                            'garansi' => $detail->garansi
+                                ? [
+                                    'no_garansi' => $detail->garansi->no_garansi,
+
+                                    'tanggal_mulai' => $detail->garansi->tanggal_mulai
+                                        ? Carbon::parse(
+                                            $detail->garansi->tanggal_mulai
+                                        )->format('d/m/Y')
+                                        : null,
+
+                                    'tanggal_berakhir' => $detail->garansi->tanggal_berakhir
+                                        ? Carbon::parse(
+                                            $detail->garansi->tanggal_berakhir
+                                        )->format('d/m/Y')
+                                        : null,
+
+                                    'is_valid' => (bool) $detail->garansi->is_valid,
+
+                                    'url_klaim' => $urlKlaim,
+                                ]
+                                : null,
+                        ];
+                    }
                 )->values(),
             ],
         ]);

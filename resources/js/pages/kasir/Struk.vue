@@ -1,11 +1,14 @@
-
 <script setup lang="ts">
+import { onMounted, ref } from 'vue';
 import { Head, Link } from '@inertiajs/vue3';
+import QRCode from 'qrcode';
 
 type GaransiItem = {
     no_garansi: string;
     tanggal_mulai: string | null;
     tanggal_berakhir: string | null;
+    is_valid: boolean;
+    url_klaim: string | null;
 } | null;
 
 type DetailItem = {
@@ -35,9 +38,49 @@ type TransaksiItem = {
     detail: DetailItem[];
 };
 
-defineProps<{
+const props = defineProps<{
     transaksi: TransaksiItem;
 }>();
+
+const qrCodes = ref<Record<number, string>>({});
+
+onMounted(async () => {
+    const itemsBergaransi = props.transaksi.detail.filter(
+        (item) => item.garansi?.url_klaim
+    );
+
+    const hasilQR = await Promise.all(
+        itemsBergaransi.map(async (item) => {
+            try {
+                const gambar = await QRCode.toDataURL(
+                    item.garansi!.url_klaim!,
+                    {
+                        width: 220,
+                        margin: 1,
+                        errorCorrectionLevel: 'M',
+                        color: {
+                            dark: '#08264F',
+                            light: '#FFFFFF',
+                        },
+                    }
+                );
+
+                return [item.id, gambar] as const;
+            } catch (error) {
+                console.error(
+                    `Gagal membuat QR garansi ${item.garansi?.no_garansi}:`,
+                    error
+                );
+
+                return [item.id, ''] as const;
+            }
+        })
+    );
+
+    qrCodes.value = Object.fromEntries(
+        hasilQR.filter(([, gambar]) => gambar !== '')
+    );
+});
 
 function rupiah(value: number) {
     return new Intl.NumberFormat('id-ID', {
@@ -181,16 +224,63 @@ function cetakStruk() {
                                             Diskon/unit: {{ rupiah(item.diskon_satuan) }}
                                         </p>
 
-                                        <div v-if="item.garansi" class="mt-2 text-xs leading-5 text-slate-500">
+                                        <div
+                                            v-if="item.garansi"
+                                            class="mt-2 text-xs leading-5 text-slate-500"
+                                        >
                                             <p>
                                                 Garansi: {{ item.garansi.no_garansi }}
                                             </p>
+
                                             <p>
                                                 Berlaku:
                                                 {{ item.garansi.tanggal_mulai ?? '—' }}
                                                 –
                                                 {{ item.garansi.tanggal_berakhir ?? '—' }}
                                             </p>
+
+                                            <!-- QR Code khusus produk bergaransi -->
+                                            <div
+                                                v-if="item.garansi.url_klaim"
+                                                class="mt-3 flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 print:break-inside-avoid"
+                                            >
+                                                <img
+                                                    v-if="qrCodes[item.id]"
+                                                    :src="qrCodes[item.id]"
+                                                    :alt="`QR klaim garansi ${item.nama_produk}`"
+                                                    class="h-24 w-24 shrink-0 rounded-lg bg-white p-1"
+                                                />
+
+                                                <div
+                                                    v-else
+                                                    class="flex h-24 w-24 shrink-0 items-center justify-center rounded-lg bg-white text-center text-[10px] text-slate-400"
+                                                >
+                                                    Menyiapkan QR...
+                                                </div>
+
+                                                <div class="min-w-0">
+                                                    <p class="font-bold text-[#08264F]">
+                                                        Scan untuk Klaim Garansi
+                                                    </p>
+
+                                                    <p class="mt-1 text-xs leading-5 text-slate-500">
+                                                        Pindai QR untuk memeriksa garansi dan mengajukan klaim produk ini.
+                                                    </p>
+
+                                                    <p class="mt-1 break-all text-[10px] text-slate-400">
+                                                        {{ item.garansi.no_garansi }}
+                                                    </p>
+                                                    <a
+                                                        :href="item.garansi.url_klaim"
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        class="no-print mt-2 inline-flex items-center gap-1 rounded-lg bg-[#08264F] px-3 py-2 text-xs font-semibold text-white transition hover:bg-blue-900"
+                                                    >
+                                                        <span>↗</span>
+                                                        Buka Halaman Klaim
+                                                    </a>
+                                                </div>
+                                            </div>
                                         </div>
                                     </td>
 
