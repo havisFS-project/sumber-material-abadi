@@ -15,16 +15,25 @@ type ProdukItem = {
     stok: number;
     punya_garansi: boolean;
     masa_garansi_bulan: number | null;
+    kategori_id: number | null;
+    foto_url: string | null;
 };
 
 type CartItem = ProdukItem & {
     jumlah: number;
 };
 
+type KategoriItem = {
+    id: number;
+    nama: string;
+};
+
 const props = defineProps<{
     produk: ProdukItem[];
+    kategoris: KategoriItem[];
     filters: {
         q: string;
+        kategori: string;
     };
     flash?: {
         success?: string | null;
@@ -37,6 +46,7 @@ const page = usePage();
 const currentUser = computed(() => page.props.auth.user);
 
 const search = ref(props.filters.q ?? '');
+const kategori = ref(props.filters.kategori ?? '');
 const keranjang = ref<CartItem[]>([]);
 
 const checkoutForm = useForm({
@@ -108,11 +118,13 @@ function rupiah(value: number): string {
     }).format(value);
 }
 
-function cariProduk() {
+// Terapkan pencarian dan filter kategori.
+function applyFilters() {
     router.get(
         '/kasir',
         {
             q: search.value.trim() || undefined,
+            kategori: kategori.value || undefined,
         },
         {
             preserveState: true,
@@ -120,6 +132,17 @@ function cariProduk() {
             replace: true,
         },
     );
+}
+
+// Pencarian berdasarkan nama atau kode produk.
+function cariProduk() {
+    applyFilters();
+}
+
+// Filter kategori melalui tombol.
+function filterByCategory(id: string) {
+    kategori.value = id;
+    applyFilters();
 }
 
 function jumlahDiKeranjang(produkId: number): number {
@@ -344,9 +367,36 @@ function logout() {
                                 type="submit"
                                 class="rounded-xl bg-[#08264F] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#10386C]"
                             >
-                                Cari Produk
+                                Cari
                             </button>
                         </form>
+
+                        <!-- FILTER KATEGORI -->
+                        <div class="mt-4 flex flex-wrap gap-2">
+                            <button
+                                type="button"
+                                class="rounded-full border px-4 py-2 text-xs font-semibold transition"
+                                :class="kategori === ''
+                                    ? 'border-[#08264F] bg-[#08264F] text-white'
+                                    : 'border-slate-200 bg-white text-slate-600 hover:border-[#08264F]'"
+                                @click="filterByCategory('')"
+                            >
+                                Semua
+                            </button>
+
+                            <button
+                                v-for="item in kategoris"
+                                :key="item.id"
+                                type="button"
+                                class="rounded-full border px-4 py-2 text-xs font-semibold transition"
+                                :class="kategori === String(item.id)
+                                    ? 'border-[#08264F] bg-[#08264F] text-white'
+                                    : 'border-slate-200 bg-white text-slate-600 hover:border-[#08264F]'"
+                                @click="filterByCategory(String(item.id))"
+                            >
+                                {{ item.nama }}
+                            </button>
+                        </div>
 
                         <div class="mt-4 flex items-center justify-between text-sm text-slate-500">
                             <span>Hasil pencarian</span>
@@ -361,8 +411,21 @@ function logout() {
                             class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
                         >
                             <div class="flex items-start justify-between gap-3">
-                                <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 font-bold text-[#08264F]">
-                                    {{ item.nama.charAt(0).toUpperCase() }}
+                                <div class="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-slate-100">
+                                    <img
+                                        v-if="item.foto_url"
+                                        :src="item.foto_url"
+                                        :alt="item.nama"
+                                        class="h-full w-full object-cover"
+                                        loading="lazy"
+                                    />
+
+                                    <span
+                                        v-else
+                                        class="text-2xl font-bold text-[#08264F]"
+                                    >
+                                        {{ item.nama.charAt(0).toUpperCase() }}
+                                    </span>
                                 </div>
 
                                 <span
@@ -448,8 +511,12 @@ function logout() {
                     </div>
                 </section>
 
-                <aside class="min-w-0 rounded-2xl border border-slate-200 bg-white shadow-sm xl:sticky xl:top-24">
-                    <div class="flex items-center justify-between border-b border-slate-100 p-5">
+                <aside
+                    class="min-w-0 rounded-2xl border border-slate-200 bg-white shadow-sm
+                    xl:sticky xl:top-24 xl:flex xl:h-[calc(100vh-7rem)]
+                    xl:min-h-0 xl:flex-col xl:overflow-hidden"
+                >
+                    <div class="flex items-center justify-between border-b border-slate-100 p-5 xl:shrink-0">
                         <div>
                             <h3 class="text-lg font-bold text-[#08264F]">
                                 Keranjang Belanja
@@ -469,7 +536,7 @@ function logout() {
                         </button>
                     </div>
 
-                    <div class="max-h-[440px] space-y-4 overflow-y-auto p-5">
+                    <div class="max-h-[440px] space-y-4 overflow-y-auto p-5 xl:min-h-0 xl:max-h-none xl:flex-1">
                         <div
                             v-if="keranjang.length === 0"
                             class="py-12 text-center"
@@ -546,7 +613,7 @@ function logout() {
                         </article>
                     </div>
 
-                    <div class="space-y-3 border-t border-slate-100 bg-slate-50/70 p-5">
+                    <div class="space-y-3 border-t border-slate-100 bg-slate-50/70 p-5 xl:min-h-0 xl:max-h-[55%] xl:shrink-0 xl:overflow-y-auto">
                         
                         <div class="space-y-4 border-b border-slate-200 pb-5">
                             <h4 class="font-bold text-[#08264F]">

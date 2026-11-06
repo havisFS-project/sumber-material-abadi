@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Produk;
 use App\Models\DetailTransaksi;
 use App\Models\Transaksi;
+use App\Models\Kategori;
 use App\Services\GaransiTransaksiService;
 use App\Services\MidtransService;
 use App\Services\TransaksiPaymentService;
@@ -43,7 +44,13 @@ class KasirController extends Controller
     {
         $this->authorizeKasir($request);
 
-        $search = trim((string) $request->query('q', ''));
+        $validated = $request->validate([
+            'q' => ['nullable', 'string', 'max:100'],
+            'kategori' => ['nullable', 'integer', 'exists:kategori,id'],
+        ]);
+
+        $search = trim($validated['q'] ?? '');
+        $kategoriId = $validated['kategori'] ?? null;
 
         $produk = Produk::query()
             ->aktif()
@@ -54,11 +61,15 @@ class KasirController extends Controller
                         ->orWhere('kode', 'like', "%{$search}%");
                 });
             })
+            ->when($kategoriId, function ($query) use ($kategoriId) {
+                $query->where('kategori_id', $kategoriId);
+            })
             ->orderBy('nama')
             ->limit(60)
             ->get()
             ->map(fn (Produk $item) => [
                 'id' => $item->id,
+                'kategori_id' => $item->kategori_id,
                 'kode' => $item->kode,
                 'nama' => $item->nama,
                 'kategori' => $item->kategori?->nama,
@@ -70,12 +81,27 @@ class KasirController extends Controller
                 'stok' => (int) $item->stok,
                 'punya_garansi' => (bool) $item->punya_garansi,
                 'masa_garansi_bulan' => $item->masa_garansi_bulan,
+
+                'foto_url' => $item->foto
+                    ? asset('storage/' . ltrim($item->foto, '/'))
+                    : null,
             ]);
+
+        $kategoris = Kategori::query()
+            ->whereHas('produk', function ($query) {
+                $query->where('is_active', true);
+            })
+            ->orderBy('nama')
+            ->get(['id', 'nama']);
 
         return Inertia::render('kasir/Index', [
             'produk' => $produk,
+            'kategoris' => $kategoris,
             'filters' => [
                 'q' => $search,
+                'kategori' => $kategoriId
+                    ? (string) $kategoriId
+                    : '',
             ],
         ]);
     }
