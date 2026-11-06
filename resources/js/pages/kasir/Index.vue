@@ -1,7 +1,6 @@
-
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { Head, Link, router, useForm } from '@inertiajs/vue3';
+import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
 
 type ProdukItem = {
     id: number;
@@ -32,6 +31,10 @@ const props = defineProps<{
         error?: string | null;
     };
 }>();
+
+const page = usePage();
+
+const currentUser = computed(() => page.props.auth.user);
 
 const search = ref(props.filters.q ?? '');
 const keranjang = ref<CartItem[]>([]);
@@ -227,6 +230,10 @@ function prosesPembayaran() {
     });
 }
 
+function logout() {
+    router.post('/logout');
+}
+
 </script>
 
 <template>
@@ -251,9 +258,14 @@ function prosesPembayaran() {
                 </div>
 
                 <div class="flex items-center gap-2 sm:gap-4">
-                    <span class="hidden text-sm text-blue-100 sm:inline">
-                        Mode Kasir
-                    </span>
+                    <div class="hidden text-right sm:block">
+                        <p class="text-sm font-semibold text-white">
+                            {{ currentUser?.name ?? 'Kasir' }}
+                        </p>
+                        <p class="text-xs text-blue-200">
+                            Kasir
+                        </p>
+                    </div>
 
                     <Link
                         href="/kasir/riwayat"
@@ -262,12 +274,13 @@ function prosesPembayaran() {
                         Riwayat
                     </Link>
 
-                    <Link
-                        href="/dashboard"
-                        class="rounded-lg border border-white/20 px-3 py-2 text-sm font-medium transition hover:bg-white/10"
+                    <button
+                        type="button"
+                        class="rounded-lg border border-red-300/40 bg-red-500/10 px-3 py-2 text-sm font-semibold text-white transition hover:bg-red-500/30"
+                        @click="logout"
                     >
-                        Dashboard
-                    </Link>
+                        Keluar
+                    </button>
                 </div>
             </div>
         </header>

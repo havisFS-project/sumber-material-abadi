@@ -3,22 +3,29 @@
 namespace App\Http\Controllers;
 
 use App\Models\Produk;
-use Illuminate\Http\Request;
-use Inertia\Inertia;
-use Inertia\Response;
 use App\Models\DetailTransaksi;
 use App\Models\Transaksi;
-use App\Models\Garansi;
+use App\Services\GaransiTransaksiService;
+use App\Services\MidtransService;
+use App\Services\TransaksiPaymentService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Inertia\Inertia;
+use Inertia\Response;
+use Throwable;
 
 class KasirController extends Controller
 {
-    public function index(Request $request): Response
+    /**
+     * Admin dan kasir boleh mengakses POS.
+     */
+    private function authorizeKasir(Request $request): void
     {
-        // POS hanya boleh diakses admin dan kasir.
         abort_unless(
             in_array(
                 $request->user()?->role,
@@ -27,6 +34,14 @@ class KasirController extends Controller
             ),
             403
         );
+    }
+
+    /**
+     * Menampilkan halaman POS.
+     */
+    public function index(Request $request): Response
+    {
+        $this->authorizeKasir($request);
 
         $search = trim((string) $request->query('q', ''));
 
@@ -66,63 +81,166 @@ class KasirController extends Controller
     }
 
     
-    public function store(Request $request): RedirectResponse
-    {
-        // Hanya admin dan kasir yang boleh melakukan checkout.
-        abort_unless(
-            in_array(
-                $request->user()?->role,
-                ['admin', 'kasir'],
-                true
-            ),
-            403
-        );
+    /**
+     * Menampilkan halaman pembayaran QRIS.
+     */
+    public function payment(
+        Request $request,
+        string $invoice
+    ): Response {
+        $this->authorizeKasir($request);
 
-        // Validasi bentuk request sebelum memproses transaksi.
+        $user = $request->user();
+
+        $query = Transaksi::query()
+            ->where('no_invoice', $invoice);
+
+        // Kasir hanya boleh membuka pembayaran miliknya.
+        // Admin dapat membuka seluruh transaksi.
+        if ($user->role === 'kasir') {
+            $query->where('kasir_id', $user->id);
+        }
+
+        $transaksi = $query->firstOrFail();
+
+        abort_unless($transaksi->metode_bayar === 'qris', 404);
+
+        // Kirim props secara langsung agar sesuai dengan Pembayaran.vue.
+        return Inertia::render('kasir/Pembayaran', [
+            'id' => $transaksi->id,
+            'no_invoice' => $transaksi->no_invoice,
+            'total_bayar' => (int) $transaksi->total_bayar,
+            'status' => $transaksi->status,
+            'qris_url' => $transaksi->qris_url,
+            'payment_expires_at' => $transaksi->payment_expires_at
+                ? $transaksi->payment_expires_at->toIso8601String()
+                : null,
+        ]);
+    }
+ 
+    /**
+     * Mengambil status terbaru pembayaran QRIS.
+     */
+    public function paymentStatus(
+        Request $request,
+        string $invoice
+    ): JsonResponse {
+        $this->authorizeKasir($request);
+
+        $user = $request->user();
+
+        $query = Transaksi::query()
+            ->where('no_invoice', $invoice)
+            ->where('metode_bayar', 'qris');
+
+        // Kasir hanya dapat memeriksa transaksi miliknya.
+        // Admin dapat memeriksa seluruh transaksi.
+        if ($user->role === 'kasir') {
+            $query->where('kasir_id', $user->id);
+        }
+
+        $transaksi = $query->firstOrFail();
+
+        return response()->json([
+            'no_invoice' => $transaksi->no_invoice,
+            'status' => $transaksi->status,
+            'payment_expires_at' => $transaksi->payment_expires_at
+                ? $transaksi->payment_expires_at->toIso8601String()
+                : null,
+        ])->header('Cache-Control', 'no-store');
+    }
+
+    /**
+     * Memproses checkout tunai dan QRIS.
+     */
+    public function store(
+        Request $request,
+        MidtransService $midtrans,
+        TransaksiPaymentService $paymentService,
+        GaransiTransaksiService $garansiService
+    ): RedirectResponse {
+        $this->authorizeKasir($request);
+
         $validated = $request->validate([
             'items' => ['required', 'array', 'min:1'],
+
             'items.*.id' => [
                 'required',
                 'integer',
                 'distinct',
                 'exists:produk,id',
             ],
+
             'items.*.jumlah' => [
                 'required',
                 'integer',
                 'min:1',
                 'max:10000',
             ],
-            'metode_bayar' => ['required', 'in:tunai,qris'],
+
+            'metode_bayar' => [
+                'required',
+                'in:tunai,qris',
+            ],
+
             'uang_diterima' => [
                 'nullable',
                 'required_if:metode_bayar,tunai',
                 'integer',
                 'min:0',
             ],
-            'nama_pelanggan' => ['nullable', 'string', 'max:255'],
-            'no_hp_pelanggan' => ['nullable', 'string', 'max:30'],
+
+            'nama_pelanggan' => [
+                'nullable',
+                'string',
+                'max:255',
+            ],
+
+            'no_hp_pelanggan' => [
+                'nullable',
+                'string',
+                'max:30',
+            ],
         ]);
 
         $kasirId = $request->user()->id;
 
-        // Invoice memiliki bagian acak untuk mengurangi risiko duplikasi.
+        // Invoice unik untuk setiap percobaan transaksi.
         $invoice = 'SMA-'
             . now()->format('Ymd-His')
             . '-'
             . Str::upper(Str::random(6));
 
+        /*
+        |--------------------------------------------------------------------------
+        | 1. Membuat transaksi dan reservasi stok
+        |--------------------------------------------------------------------------
+        |
+        | Tunai:
+        | - Status langsung lunas.
+        | - Stok dikurangi.
+        | - Garansi langsung diterbitkan.
+        |
+        | QRIS:
+        | - Status menunggu_pembayaran.
+        | - Stok direservasi dengan pengurangan stok.
+        | - Garansi belum diterbitkan.
+        |
+        */
+
         $transaksi = DB::transaction(function () use (
             $validated,
             $invoice,
-            $kasirId
+            $kasirId,
+            $garansiService
         ): Transaksi {
+
             $items = $validated['items'];
 
-            // Kunci baris produk selama checkout agar stok tidak
-            // diubah bersamaan oleh transaksi lain.
+            // Kunci produk selama proses checkout.
             $produkList = Produk::query()
                 ->whereIn('id', array_column($items, 'id'))
+                ->orderBy('id')
                 ->lockForUpdate()
                 ->get()
                 ->keyBy('id');
@@ -137,11 +255,11 @@ class KasirController extends Controller
             $subtotal = 0;
             $totalDiskon = 0;
             $totalBayar = 0;
+            $adaGaransi = false;
 
-            // Seluruh harga dihitung ulang dari database,
-            // bukan memakai total dari browser.
             foreach ($items as $input) {
                 $produk = $produkList->get((int) $input['id']);
+
                 $jumlah = (int) $input['jumlah'];
 
                 if (! $produk || ! $produk->is_active) {
@@ -167,6 +285,10 @@ class KasirController extends Controller
                 $totalDiskon += $diskonSatuan * $jumlah;
                 $totalBayar += $lineSubtotal;
 
+                if ($produk->punya_garansi) {
+                    $adaGaransi = true;
+                }
+
                 $lines[] = [
                     'produk' => $produk,
                     'jumlah' => $jumlah,
@@ -176,8 +298,20 @@ class KasirController extends Controller
                 ];
             }
 
-            // Kolom nominal pada migration menggunakan unsignedInteger.
-            // Batas maksimum integer unsigned MySQL adalah 4.294.967.295.
+            // Jika ada produk bergaransi, identitas pelanggan wajib.
+            if ($adaGaransi) {
+                if (
+                    blank($validated['nama_pelanggan'] ?? null)
+                    || blank($validated['no_hp_pelanggan'] ?? null)
+                ) {
+                    throw ValidationException::withMessages([
+                        'nama_pelanggan' =>
+                            'Nama dan nomor HP pelanggan wajib diisi karena terdapat produk bergaransi.',
+                    ]);
+                }
+            }
+
+            // Batas nominal unsignedInteger MySQL.
             $batasNominal = 4_294_967_295;
 
             if (
@@ -192,6 +326,13 @@ class KasirController extends Controller
 
             $metodeBayar = $validated['metode_bayar'];
 
+            // QRIS tidak dapat memproses nominal nol.
+            if ($metodeBayar === 'qris' && $totalBayar < 1) {
+                throw ValidationException::withMessages([
+                    'metode_bayar' => 'Total pembayaran QRIS harus lebih dari nol.',
+                ]);
+            }
+
             $uangDiterima = $metodeBayar === 'tunai'
                 ? (int) $validated['uang_diterima']
                 : null;
@@ -205,30 +346,38 @@ class KasirController extends Controller
                 ]);
             }
 
-            // Simpan header transaksi.
+            // Tentukan status sesuai metode pembayaran.
+            $status = $metodeBayar === 'tunai'
+                ? 'lunas'
+                : 'menunggu_pembayaran';
+
             $transaksi = Transaksi::create([
                 'no_invoice' => $invoice,
                 'kasir_id' => $kasirId,
+
                 'nama_pelanggan' => $validated['nama_pelanggan'] ?? null,
                 'no_hp_pelanggan' => $validated['no_hp_pelanggan'] ?? null,
+
                 'subtotal' => $subtotal,
                 'total_diskon' => $totalDiskon,
                 'total_bayar' => $totalBayar,
+
                 'metode_bayar' => $metodeBayar,
+
                 'uang_diterima' => $uangDiterima,
+
                 'kembalian' => $uangDiterima !== null
                     ? $uangDiterima - $totalBayar
                     : null,
-                'status' => 'lunas',
+
+                'status' => $status,
             ]);
 
-            // Simpan rincian barang dan kurangi stok.
-            
+            // Simpan detail transaksi dan reservasi stok.
             foreach ($lines as $line) {
                 $produk = $line['produk'];
 
-                // Simpan rincian barang yang dibeli.
-                $detail = DetailTransaksi::create([
+                DetailTransaksi::create([
                     'transaksi_id' => $transaksi->id,
                     'produk_id' => $produk->id,
                     'nama_produk' => $produk->nama,
@@ -238,55 +387,145 @@ class KasirController extends Controller
                     'subtotal' => $line['subtotal'],
                 ]);
 
-                // Buat garansi apabila produk memilikinya.
-                if ($produk->punya_garansi) {
-                    $masaGaransi = (int) $produk->masa_garansi_bulan;
-
-                    // Produk bergaransi harus mempunyai masa berlaku.
-                    if ($masaGaransi < 1 || $masaGaransi > 120) {
-                        throw ValidationException::withMessages([
-                            'items' => "Masa garansi produk {$produk->nama} belum valid.",
-                        ]);
-                    }
-
-                    $tanggalMulai = now()->startOfDay();
-
-                    // Buat nomor garansi unik.
-                    do {
-                        $nomorGaransi = 'GAR-'
-                            . $tanggalMulai->format('Ymd')
-                            . '-'
-                            . Str::upper(Str::random(8));
-                    } while (
-                        Garansi::where('no_garansi', $nomorGaransi)->exists()
-                    );
-
-                    Garansi::create([
-                        'no_garansi' => $nomorGaransi,
-                        'detail_transaksi_id' => $detail->id,
-                        'tanggal_mulai' => $tanggalMulai->toDateString(),
-                        'tanggal_berakhir' => $tanggalMulai
-                            ->copy()
-                            ->addMonthsNoOverflow($masaGaransi)
-                            ->toDateString(),
-                        'status_klaim' => 'belum_ada',
-                    ]);
-                }
-
-                // Kurangi stok dalam transaksi database yang sama.
+                // Stok dikurangi untuk transaksi tunai maupun QRIS.
+                // Pada QRIS, ini merupakan reservasi stok.
                 $produk->decrement('stok', $line['jumlah']);
             }
 
+            // Tunai sudah dibayar, sehingga garansi boleh diterbitkan.
+            if ($metodeBayar === 'tunai') {
+                $garansiService->terbitkan($transaksi);
+            }
 
             return $transaksi;
+
         }, 3);
 
+        /*
+        |--------------------------------------------------------------------------
+        | 2. Jika pembayaran tunai, selesai
+        |--------------------------------------------------------------------------
+        */
+
+        if ($transaksi->metode_bayar === 'tunai') {
+            return redirect()
+                ->route('kasir.index')
+                ->with(
+                    'success',
+                    "Transaksi {$transaksi->no_invoice} berhasil disimpan."
+                );
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 3. Jika QRIS, buat charge ke Midtrans
+        |--------------------------------------------------------------------------
+        */
+
+        try {
+            $qrisData = $midtrans->createQrisCharge($transaksi);
+
+                } catch (Throwable $exception) {
+
+            Log::error('Gagal membuat QRIS Midtrans.', [
+                'order_id' => $transaksi->no_invoice,
+                'error' => $exception->getMessage(),
+            ]);
+
+            // Periksa apakah Midtrans sebenarnya sudah membuat transaksi.
+            $remoteStatus = null;
+
+            try {
+                $remoteStatus = $midtrans->getTransactionStatus(
+                    $transaksi->no_invoice
+                );
+            } catch (Throwable $statusException) {
+                Log::critical('Status transaksi QRIS belum dapat dipastikan.', [
+                    'order_id' => $transaksi->no_invoice,
+                    'error' => $statusException->getMessage(),
+                ]);
+            }
+
+            $remoteState = strtolower(
+                (string) ($remoteStatus['transaction_status'] ?? '')
+            );
+
+            if ($remoteState === 'settlement') {
+                $paymentService->markAsPaid($transaksi->no_invoice);
+            } elseif ($remoteState === 'expire') {
+                $paymentService->releaseReservation(
+                    $transaksi->no_invoice,
+                    'kedaluwarsa'
+                );
+            } elseif (in_array($remoteState, ['deny', 'cancel'], true)) {
+                $paymentService->releaseReservation(
+                    $transaksi->no_invoice,
+                    'gagal'
+                );
+            }
+
+            // Jika status tidak diketahui atau masih pending,
+            // jangan kembalikan stok secara otomatis.
+            return redirect()
+                ->route('kasir.index')
+                ->withErrors([
+                    'metode_bayar' =>
+                        "Status QRIS invoice {$transaksi->no_invoice} belum dapat dipastikan. Jangan ulangi checkout untuk transaksi ini sebelum statusnya diperiksa.",
+                ]);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 4. Simpan data QRIS dari Midtrans
+        |--------------------------------------------------------------------------
+        */
+
+        DB::transaction(function () use (
+            $transaksi,
+            $qrisData
+        ) {
+
+            $item = Transaksi::query()
+                ->whereKey($transaksi->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            // Pastikan transaksi masih menunggu pembayaran.
+            if ($item->status !== 'menunggu_pembayaran') {
+                throw new \RuntimeException(
+                    'Status transaksi berubah sebelum data QRIS disimpan.'
+                );
+            }
+
+            if (
+                $qrisData['order_id'] !== $item->no_invoice
+                || blank($qrisData['transaction_id'])
+                || blank($qrisData['qris_url'])
+            ) {
+                throw new \RuntimeException(
+                    'Data QRIS dari Midtrans tidak sesuai dengan transaksi.'
+                );
+            }
+
+            $item->update([
+                'midtrans_transaction_id' => $qrisData['transaction_id'],
+                'qris_url' => $qrisData['qris_url'],
+                'payment_expires_at' => $qrisData['payment_expires_at'],
+            ]);
+
+        }, 3);
+
+        /*
+        |--------------------------------------------------------------------------
+        | 5. Arahkan kasir ke halaman pembayaran QRIS
+        |--------------------------------------------------------------------------
+        */
+
         return redirect()
-            ->route('kasir.index')
+            ->route('kasir.pembayaran', $transaksi->no_invoice)
             ->with(
                 'success',
-                "Transaksi {$transaksi->no_invoice} berhasil disimpan."
+                'QRIS berhasil dibuat. Silakan tunggu pembayaran pelanggan.'
             );
     }
-
 }

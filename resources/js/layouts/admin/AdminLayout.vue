@@ -84,6 +84,10 @@ const activeMenu = computed(() => {
     return 'klaim-garansi';
     }
 
+    if (page.url.startsWith('/admin/pengguna')) {
+    return 'pengguna';
+    }
+
     return '';
 });
 
@@ -167,6 +171,19 @@ function logout() {
                     <span class="text-lg">▣</span>
                     Klaim Garansi
                 </Link>
+
+                <Link
+                    href="/admin/pengguna"
+                    class="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold transition"
+                    :class="
+                        activeMenu === 'pengguna'
+                            ? 'bg-[#FF6B16] text-white shadow-lg shadow-orange-950/20'
+                            : 'text-blue-100 hover:bg-white/10'
+                    "
+                >
+                    <span class="text-lg">♙</span>
+                    Manajemen Pengguna
+                </Link>
             </nav>
 
             <div class="border-t border-white/10 p-4">
@@ -203,15 +220,19 @@ function logout() {
                 </div>
 
                 <div class="flex items-center gap-3">
-                    <span
-                        class="hidden rounded-full bg-orange-50 px-3 py-1.5 text-xs font-semibold text-orange-700 sm:inline-flex"
-                    >
-                        Administrator
-                    </span>
+                    <div class="hidden text-right sm:block">
+                        <p class="text-sm font-semibold text-[#08264F]">
+                            {{ page.props.auth.user?.name }}
+                        </p>
+
+                        <p class="text-xs text-slate-500">
+                            Administrator
+                        </p>
+                    </div>
 
                     <button
                         type="button"
-                        class="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 lg:hidden"
+                        class="rounded-lg bg-red-50 px-4 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-100"
                         @click="logout"
                     >
                         Keluar

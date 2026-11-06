@@ -11,10 +11,32 @@ class Transaksi extends Model
     protected $table = 'transaksi';
 
     protected $fillable = [
-        'no_invoice', 'kasir_id', 'nama_pelanggan', 'no_hp_pelanggan',
-        'subtotal', 'total_diskon', 'total_bayar', 'metode_bayar',
-        'uang_diterima', 'kembalian', 'status', 'alasan_batal', 'dibatalkan_oleh',
+        'no_invoice',
+        'kasir_id',
+        'nama_pelanggan',
+        'no_hp_pelanggan',
+        'subtotal',
+        'total_diskon',
+        'total_bayar',
+        'metode_bayar',
+        'uang_diterima',
+        'kembalian',
+        'status',
+        'alasan_batal',
+        'dibatalkan_oleh',
+
+        // Midtrans Payment
+        'midtrans_transaction_id',
+        'qris_url',
+        'payment_expires_at',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'payment_expires_at' => 'datetime',
+        ];
+    }
 
     public function kasir(): BelongsTo
     {

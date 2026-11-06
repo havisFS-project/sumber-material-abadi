@@ -14,6 +14,8 @@ use Inertia\Inertia;
 use Laravel\Fortify\Contracts\LoginResponse as LoginResponseContract;
 use Laravel\Fortify\Features;
 use Laravel\Fortify\Fortify;
+use App\Models\User;
+use Illuminate\Support\Facades\Hash;
 
 class FortifyServiceProvider extends ServiceProvider
 {
@@ -30,6 +32,27 @@ class FortifyServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        Fortify::authenticateUsing(function (Request $request) {
+            $user = User::where(
+                Fortify::username(),
+                $request->input(Fortify::username())
+            )->first();
+
+            if (! $user) {
+                return null;
+            }
+
+            if (! Hash::check($request->input('password'), $user->password)) {
+                return null;
+            }
+
+            if (! $user->is_active) {
+                return null;
+            }
+
+            return $user;
+        });
+
         $this->configureActions();
         $this->configureViews();
         $this->configureRateLimiting();

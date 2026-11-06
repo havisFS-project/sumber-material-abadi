@@ -73,9 +73,11 @@ class GaransiController extends Controller
                 'tanggal_berakhir' => $tanggalBerakhir->format('d/m/Y'),
 
                 // Status masa berlaku berbeda dari status klaim.
-                'masa_berlaku' => $tanggalBerakhir->endOfDay()->isPast()
-                    ? 'berakhir'
-                    : 'aktif',
+                'masa_berlaku' => ! $garansi->is_valid
+                    ? 'tidak_valid'
+                    : ($tanggalBerakhir->endOfDay()->isPast()
+                        ? 'berakhir'
+                        : 'aktif'),
 
                 'status_klaim' => $garansi->status_klaim,
 
@@ -137,6 +139,12 @@ class GaransiController extends Controller
                 if (! $garansi) {
                     throw ValidationException::withMessages([
                         'no_garansi' => 'Nomor garansi tidak ditemukan.',
+                    ]);
+                }
+
+                if (! $garansi->is_valid) {
+                    throw ValidationException::withMessages([
+                        'no_garansi' => 'Garansi tidak berlaku karena transaksi pembelian telah dibatalkan.',
                     ]);
                 }
 

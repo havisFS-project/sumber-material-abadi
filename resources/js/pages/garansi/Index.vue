@@ -7,7 +7,7 @@ type HasilGaransi = {
     nama_produk: string;
     tanggal_mulai: string;
     tanggal_berakhir: string;
-    masa_berlaku: 'aktif' | 'berakhir';
+    masa_berlaku: 'aktif' | 'berakhir' | 'tidak_valid';
     status_klaim: string;
     catatan_pelanggan: string | null;
     jenis_penyelesaian: 'perbaikan' | 'penggantian' | 'refund' | null;
@@ -253,13 +253,17 @@ function rupiah(value: number): string {
                         :class="
                             hasil.masa_berlaku === 'aktif'
                                 ? 'bg-green-50 text-green-700'
-                                : 'bg-slate-100 text-slate-600'
+                                : hasil.masa_berlaku === 'berakhir'
+                                    ? 'bg-amber-50 text-amber-700'
+                                    : 'bg-red-50 text-red-700'
                         "
                     >
                         {{
                             hasil.masa_berlaku === 'aktif'
                                 ? 'Masa garansi aktif'
-                                : 'Masa garansi berakhir'
+                                : hasil.masa_berlaku === 'berakhir'
+                                    ? 'Masa garansi berakhir'
+                                    : 'Garansi tidak berlaku'
                         }}
                     </span>
                 </div>
@@ -564,6 +568,44 @@ function rupiah(value: number): string {
                         foto yang diberikan sesuai kondisi produk.
                     </p>
                 </form>
+            </section>
+
+            <section
+                v-else-if="
+                    dicari &&
+                    hasil &&
+                    hasil.masa_berlaku === 'tidak_valid'
+                "
+                class="mt-6 rounded-2xl border border-red-200 bg-red-50 p-5 sm:p-6"
+            >
+                <div class="flex items-start gap-3">
+                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-100 text-red-600">
+                        <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            class="h-5 w-5"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <path d="M12 9v4" />
+                            <path d="M12 17h.01" />
+                            <path d="M10.3 3.9 1.8 18.1a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+                        </svg>
+                    </div>
+
+                    <div>
+                        <h3 class="font-bold text-red-900">
+                            Garansi Tidak Berlaku
+                        </h3>
+
+                        <p class="mt-2 text-sm leading-6 text-red-800">
+                            Garansi produk ini sudah tidak berlaku karena
+                            transaksi pembelian telah dibatalkan oleh pihak toko.
+                            Oleh karena itu, pengajuan klaim garansi tidak dapat dilakukan.
+                        </p>
+                    </div>
+                </div>
             </section>
 
             <section
